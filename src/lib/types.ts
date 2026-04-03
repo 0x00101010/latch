@@ -9,12 +9,16 @@ export interface Todo {
   description: string;
   /** Optional source reference (e.g. LINEAR:CHAIN-1234, GH:org/repo#123) */
   sourceRef?: string;
+  /** Context lines (indented `  > text` below the task) */
+  context: string[];
   /** Project/group heading this task belongs to */
   project?: string;
   /** Which file this task came from */
   sourceFile: string;
   /** Line number in the source file (1-indexed) */
   lineNumber: number;
+  /** Number of lines this task occupies (task line + context lines) */
+  lineCount: number;
 }
 
 export interface InboxItem {
