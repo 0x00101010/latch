@@ -9,11 +9,19 @@
   "license": "MIT",
   "commands": [
     {
-      "name": "quick-add",
-      "title": "Quick Add",
+      "name": "latch-todo",
+      "title": "Latch Todo",
       "subtitle": "Latch",
       "description": "Capture a task to inbox",
-      "mode": "view"
+      "mode": "no-view",
+      "arguments": [
+        {
+          "name": "task",
+          "placeholder": "What needs to be done?",
+          "type": "text",
+          "required": true
+        }
+      ]
     },
     {
       "name": "my-tasks",

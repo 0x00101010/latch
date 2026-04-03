@@ -13,8 +13,8 @@ type ExtensionPreferences = {}
 declare type Preferences = ExtensionPreferences
 
 declare namespace Preferences {
-  /** Preferences accessible in the `quick-add` command */
-  export type QuickAdd = ExtensionPreferences & {}
+  /** Preferences accessible in the `latch-todo` command */
+  export type LatchTodo = ExtensionPreferences & {}
   /** Preferences accessible in the `my-tasks` command */
   export type MyTasks = ExtensionPreferences & {}
   /** Preferences accessible in the `triage-inbox` command */
@@ -26,8 +26,11 @@ declare namespace Preferences {
 }
 
 declare namespace Arguments {
-  /** Arguments passed to the `quick-add` command */
-  export type QuickAdd = {}
+  /** Arguments passed to the `latch-todo` command */
+  export type LatchTodo = {
+  /** What needs to be done? */
+  "task": string
+}
   /** Arguments passed to the `my-tasks` command */
   export type MyTasks = {}
   /** Arguments passed to the `triage-inbox` command */
