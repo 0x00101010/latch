@@ -35,7 +35,7 @@
       "subtitle": "Latch",
       "description": "Auto-categorize inbox items using AI",
       "mode": "no-view",
-      "interval": "10m"
+      "interval": "1m"
     },
     {
       "name": "search-knowledge",

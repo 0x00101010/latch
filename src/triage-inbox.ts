@@ -1,4 +1,4 @@
-import { AI, showHUD, environment } from "@raycast/api";
+import { AI, showHUD, showToast, Toast, environment } from "@raycast/api";
 import {
   parseInbox,
   extractWorkCategories,
@@ -10,12 +10,20 @@ import {
 } from "./lib/triage";
 
 export default async function Command() {
+  const manual = environment.launchType === "userInitiated";
   const entries = parseInbox();
+
   if (entries.length === 0) {
-    if (environment.launchType === "userInitiated") {
-      await showHUD("Inbox empty — nothing to triage");
-    }
+    if (manual) await showHUD("Inbox empty — nothing to triage");
     return;
+  }
+
+  let toast: Toast | undefined;
+  if (manual) {
+    toast = await showToast({
+      style: Toast.Style.Animated,
+      title: `Triaging ${entries.length} item(s)…`,
+    });
   }
 
   const { categories, recentTasks } = extractWorkCategories();
@@ -37,6 +45,9 @@ export default async function Command() {
       if (result.confidence >= 0.8) {
         routeTask(result);
         processed.push(entry);
+        if (toast) {
+          toast.message = `${processed.length}/${entries.length} done`;
+        }
       } else {
         lowConfidence.push(entry.title);
       }
@@ -47,9 +58,16 @@ export default async function Command() {
 
   removeProcessedEntries(processed);
 
-  if (lowConfidence.length > 0) {
+  const summary =
+    lowConfidence.length > 0
+      ? `Triaged ${processed.length}, ${lowConfidence.length} need manual triage`
+      : `Triaged ${processed.length} item(s)`;
+
+  if (toast) {
+    toast.style = lowConfidence.length > 0 ? Toast.Style.Failure : Toast.Style.Success;
+    toast.title = summary;
+    toast.message = undefined;
+  } else if (lowConfidence.length > 0) {
     await showHUD(`Latch: ${lowConfidence.length} item(s) need manual triage`);
-  } else if (processed.length > 0) {
-    await showHUD(`Latch: triaged ${processed.length} item(s)`);
   }
 }
