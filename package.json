@@ -13,13 +13,12 @@
       "title": "Latch Todo",
       "subtitle": "Latch",
       "description": "Capture a task to inbox",
-      "mode": "no-view",
+      "mode": "view",
       "arguments": [
         {
           "name": "task",
           "placeholder": "What needs to be done?",
-          "type": "text",
-          "required": true
+          "type": "text"
         }
       ]
     },
