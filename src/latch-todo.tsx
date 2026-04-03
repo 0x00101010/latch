@@ -7,16 +7,27 @@ interface Arguments {
   task: string;
 }
 
-function addToInbox(text: string) {
+function addToInbox(title: string, context?: string) {
+  const normalized = title.replace(/[\r\n]+/g, " ").trim();
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
   const time = now.toTimeString().slice(0, 5);
-  const line = `- ${date} ${time} | ${text}\n`;
+
+  let entry = `- ${date} ${time} | ${normalized}\n`;
+
+  if (context) {
+    const contextLines = context
+      .split(/\r?\n/)
+      .filter((l) => l.trim().length > 0)
+      .map((l) => `  > ${l.trim()}`)
+      .join("\n");
+    entry += contextLines + "\n";
+  }
 
   if (!fs.existsSync(INBOX_PATH)) {
-    fs.writeFileSync(INBOX_PATH, `# Inbox\n\n${line}`, "utf-8");
+    fs.writeFileSync(INBOX_PATH, `# Inbox\n\n${entry}`, "utf-8");
   } else {
-    fs.appendFileSync(INBOX_PATH, line, "utf-8");
+    fs.appendFileSync(INBOX_PATH, entry, "utf-8");
   }
 }
 
@@ -45,15 +56,17 @@ export default function Command(props: LaunchProps<{ arguments: Arguments }>) {
 }
 
 function InboxForm() {
-  async function handleSubmit(values: { task: string }) {
-    const text = values.task.trim();
-    if (!text) {
+  async function handleSubmit(values: { task: string; context: string }) {
+    const title = values.task.trim();
+    if (!title) {
       await showToast({ style: Toast.Style.Failure, title: "Task cannot be empty" });
       return;
     }
 
+    const context = values.context?.trim() || undefined;
+
     try {
-      addToInbox(text);
+      addToInbox(title, context);
       await showToast({ style: Toast.Style.Success, title: "Added to inbox" });
       await popToRoot();
     } catch (error) {
@@ -69,7 +82,8 @@ function InboxForm() {
         </ActionPanel>
       }
     >
-      <Form.TextArea id="task" title="Task" placeholder="What needs to be done?" autoFocus />
+      <Form.TextField id="task" title="Task" placeholder="What needs to be done?" autoFocus />
+      <Form.TextArea id="context" title="Context" placeholder="URLs, notes, details... (optional)" />
     </Form>
   );
 }
