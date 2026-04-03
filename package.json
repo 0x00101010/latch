@@ -1,0 +1,69 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "latch",
+  "title": "Latch",
+  "description": "Personal productivity — capture, triage, view, search",
+  "icon": "icon.png",
+  "author": "francis",
+  "categories": ["Productivity"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "quick-add",
+      "title": "Quick Add",
+      "subtitle": "Latch",
+      "description": "Capture a task to inbox",
+      "mode": "view"
+    },
+    {
+      "name": "my-tasks",
+      "title": "My Tasks",
+      "subtitle": "Latch",
+      "description": "View and manage all tasks",
+      "mode": "view"
+    },
+    {
+      "name": "triage-inbox",
+      "title": "Triage Inbox",
+      "subtitle": "Latch",
+      "description": "Auto-categorize inbox items using AI",
+      "mode": "no-view",
+      "interval": "10m"
+    },
+    {
+      "name": "search-knowledge",
+      "title": "Search Knowledge",
+      "subtitle": "Latch",
+      "description": "Semantic search across workspace",
+      "mode": "view"
+    },
+    {
+      "name": "reindex",
+      "title": "Reindex Knowledge Base",
+      "subtitle": "Latch",
+      "description": "Update QMD search index",
+      "mode": "no-view",
+      "interval": "15m"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.93.3",
+    "@raycast/utils": "^1.19.1"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "@types/node": "22.13.14",
+    "@types/react": "19.0.12",
+    "eslint": "^9.23.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2"
+  },
+  "scripts": {
+    "build": "ray build --skip-types -e dist -o dist",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint",
+    "prepublishOnly": "echo \"Error: no publish\" && exit 1",
+    "publish": "npx @raycast/api@latest publish"
+  }
+}
