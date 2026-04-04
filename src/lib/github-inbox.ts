@@ -15,18 +15,7 @@ export function fetchGitHubInbox(): Promise<InboxEntry[]> {
   return new Promise((resolve) => {
     execFile(
       GH_PATH,
-      [
-        "issue",
-        "list",
-        "--repo",
-        REPO,
-        "--label",
-        "inbox",
-        "--json",
-        "number,title,body,createdAt",
-        "--limit",
-        "50",
-      ],
+      ["issue", "list", "--repo", REPO, "--json", "number,title,body,createdAt", "--limit", "50"],
       { timeout: 15000 },
       (err, stdout) => {
         if (err || !stdout.trim()) {
