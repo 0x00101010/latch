@@ -8,8 +8,13 @@ const HEADING_RE = /^### (.+)$/;
 export interface InboxEntry {
   title: string;
   context: string[];
+  /** Source of this entry */
+  source: "local" | "github";
+  /** Line range in inbox.md (local entries only) */
   startLine: number;
   endLine: number;
+  /** GitHub Issue number (github entries only) */
+  issueNumber?: number;
 }
 
 export interface TriageResult {
@@ -42,6 +47,7 @@ export function parseInbox(): InboxEntry[] {
     entries.push({
       title: match[1].trim(),
       context,
+      source: "local",
       startLine: i,
       endLine: j - 1,
     });

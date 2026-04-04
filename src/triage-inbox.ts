@@ -7,11 +7,16 @@ import {
   routeTask,
   removeProcessedEntries,
   InboxEntry,
+  TriageResult,
 } from "./lib/triage";
+import { fetchGitHubInbox, closeGitHubIssue } from "./lib/github-inbox";
 
 export default async function Command() {
   const manual = environment.launchType === "userInitiated";
-  const entries = parseInbox();
+
+  const [localEntries, githubEntries] = await Promise.all([Promise.resolve(parseInbox()), fetchGitHubInbox()]);
+
+  const entries = [...localEntries, ...githubEntries];
 
   if (entries.length === 0) {
     if (manual) await showHUD("Inbox empty — nothing to triage");
@@ -27,8 +32,10 @@ export default async function Command() {
   }
 
   const { categories, recentTasks } = extractWorkCategories();
-  const processed: InboxEntry[] = [];
+  const processedLocal: InboxEntry[] = [];
+  const processedGitHub: { entry: InboxEntry; result: TriageResult }[] = [];
   const lowConfidence: string[] = [];
+  let doneCount = 0;
 
   for (const entry of entries) {
     const prompt = buildTriagePrompt(entry, categories, recentTasks);
@@ -44,9 +51,14 @@ export default async function Command() {
 
       if (result.confidence >= 0.8) {
         routeTask(result);
-        processed.push(entry);
+        if (entry.source === "github") {
+          processedGitHub.push({ entry, result });
+        } else {
+          processedLocal.push(entry);
+        }
+        doneCount++;
         if (toast) {
-          toast.message = `${processed.length}/${entries.length} done`;
+          toast.message = `${doneCount}/${entries.length} done`;
         }
       } else {
         lowConfidence.push(entry.title);
@@ -56,12 +68,19 @@ export default async function Command() {
     }
   }
 
-  removeProcessedEntries(processed);
+  removeProcessedEntries(processedLocal);
 
+  await Promise.all(
+    processedGitHub
+      .filter((p) => p.entry.issueNumber != null)
+      .map((p) => closeGitHubIssue(p.entry.issueNumber!, p.result.category, p.result.priority)),
+  );
+
+  const totalProcessed = processedLocal.length + processedGitHub.length;
   const summary =
     lowConfidence.length > 0
-      ? `Triaged ${processed.length}, ${lowConfidence.length} need manual triage`
-      : `Triaged ${processed.length} item(s)`;
+      ? `Triaged ${totalProcessed}, ${lowConfidence.length} need manual triage`
+      : `Triaged ${totalProcessed} item(s)`;
 
   if (toast) {
     toast.style = lowConfidence.length > 0 ? Toast.Style.Failure : Toast.Style.Success;
