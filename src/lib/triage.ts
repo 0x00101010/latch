@@ -1,4 +1,5 @@
 import fs from "fs";
+import { AI, Toast } from "@raycast/api";
 import { INBOX_PATH, WORK_TODO_PATH, PERSONAL_TODO_PATH } from "./paths";
 
 const INBOX_ITEM_RE = /^- \d{4}-\d{2}-\d{2} \d{2}:\d{2} \| (.+)$/;
@@ -56,8 +57,12 @@ export function parseInbox(): InboxEntry[] {
   return entries;
 }
 
-export function extractWorkCategories(): { categories: string[]; recentTasks: string[] } {
-  if (!fs.existsSync(WORK_TODO_PATH)) return { categories: [], recentTasks: [] };
+export function extractWorkCategories(): {
+  categories: string[];
+  recentTasks: string[];
+} {
+  if (!fs.existsSync(WORK_TODO_PATH))
+    return { categories: [], recentTasks: [] };
   const content = fs.readFileSync(WORK_TODO_PATH, "utf-8");
   const lines = content.split("\n");
 
@@ -80,8 +85,13 @@ export function extractWorkCategories(): { categories: string[]; recentTasks: st
   return { categories, recentTasks };
 }
 
-export function buildTriagePrompt(entry: InboxEntry, categories: string[], recentTasks: string[]): string {
-  const contextStr = entry.context.length > 0 ? entry.context.join("\n") : "(none)";
+export function buildTriagePrompt(
+  entry: InboxEntry,
+  categories: string[],
+  recentTasks: string[],
+): string {
+  const contextStr =
+    entry.context.length > 0 ? entry.context.join("\n") : "(none)";
 
   return `You are a task categorizer for a software engineer's personal productivity system.
 
@@ -118,7 +128,12 @@ export function parseTriageResponse(raw: string): TriageResult | null {
   if (!jsonMatch) return null;
   try {
     const parsed = JSON.parse(jsonMatch[0]);
-    if (!parsed.category || !parsed.priority || typeof parsed.confidence !== "number") return null;
+    if (
+      !parsed.category ||
+      !parsed.priority ||
+      typeof parsed.confidence !== "number"
+    )
+      return null;
     return {
       category: parsed.category,
       priority: parsed.priority,
@@ -145,7 +160,11 @@ export function routeTask(result: TriageResult): void {
   const content = fs.readFileSync(targetPath, "utf-8");
 
   if (isPersonal) {
-    fs.writeFileSync(targetPath, content.trimEnd() + "\n" + entry + "\n", "utf-8");
+    fs.writeFileSync(
+      targetPath,
+      content.trimEnd() + "\n" + entry + "\n",
+      "utf-8",
+    );
     return;
   }
 
@@ -153,7 +172,11 @@ export function routeTask(result: TriageResult): void {
   const headingIdx = content.indexOf(headingPattern);
 
   if (headingIdx === -1) {
-    fs.writeFileSync(targetPath, content.trimEnd() + "\n\n### " + result.category + "\n\n" + entry + "\n", "utf-8");
+    fs.writeFileSync(
+      targetPath,
+      content.trimEnd() + "\n\n### " + result.category + "\n\n" + entry + "\n",
+      "utf-8",
+    );
     return;
   }
 
@@ -180,4 +203,59 @@ export function removeProcessedEntries(entries: InboxEntry[]): void {
 
   const remaining = lines.filter((_, i) => !removeLines.has(i));
   fs.writeFileSync(INBOX_PATH, remaining.join("\n"), "utf-8");
+}
+
+export interface TriageOutcome {
+  processedCount: number;
+  lowConfidenceCount: number;
+}
+
+export async function triageInbox(
+  manual: boolean,
+  toast?: Toast,
+): Promise<TriageOutcome> {
+  const entries = parseInbox();
+
+  if (entries.length === 0) {
+    return { processedCount: 0, lowConfidenceCount: 0 };
+  }
+
+  if (manual && toast) {
+    toast.title = `Triaging ${entries.length} item(s)…`;
+    toast.style = Toast.Style.Animated;
+  }
+
+  const { categories, recentTasks } = extractWorkCategories();
+  const processed: InboxEntry[] = [];
+  const lowConfidence: string[] = [];
+
+  for (const entry of entries) {
+    const prompt = buildTriagePrompt(entry, categories, recentTasks);
+
+    try {
+      const response = await AI.ask(prompt, { creativity: "none" });
+      const result = parseTriageResponse(response);
+
+      if (!result || result.confidence < 0.8) {
+        lowConfidence.push(entry.title);
+        continue;
+      }
+
+      routeTask(result);
+      processed.push(entry);
+
+      if (toast) {
+        toast.message = `${processed.length}/${entries.length} done`;
+      }
+    } catch {
+      lowConfidence.push(entry.title);
+    }
+  }
+
+  removeProcessedEntries(processed);
+
+  return {
+    processedCount: processed.length,
+    lowConfidenceCount: lowConfidence.length,
+  };
 }

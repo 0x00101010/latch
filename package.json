@@ -5,7 +5,9 @@
   "description": "Personal productivity — capture, triage, view, search",
   "icon": "icon.png",
   "author": "francis",
-  "categories": ["Productivity"],
+  "categories": [
+    "Productivity"
+  ],
   "license": "MIT",
   "commands": [
     {
@@ -28,6 +30,14 @@
       "subtitle": "Latch",
       "description": "View and manage all tasks",
       "mode": "view"
+    },
+    {
+      "name": "sync-sources",
+      "title": "Sync & Triage",
+      "subtitle": "Latch",
+      "description": "Sync GitHub Issues to inbox, then auto-triage",
+      "mode": "no-view",
+      "interval": "10m"
     },
     {
       "name": "triage-inbox",

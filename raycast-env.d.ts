@@ -17,6 +17,8 @@ declare namespace Preferences {
   export type LatchTodo = ExtensionPreferences & {}
   /** Preferences accessible in the `my-tasks` command */
   export type MyTasks = ExtensionPreferences & {}
+  /** Preferences accessible in the `sync-sources` command */
+  export type SyncSources = ExtensionPreferences & {}
   /** Preferences accessible in the `triage-inbox` command */
   export type TriageInbox = ExtensionPreferences & {}
   /** Preferences accessible in the `search-knowledge` command */
@@ -33,6 +35,8 @@ declare namespace Arguments {
 }
   /** Arguments passed to the `my-tasks` command */
   export type MyTasks = {}
+  /** Arguments passed to the `sync-sources` command */
+  export type SyncSources = {}
   /** Arguments passed to the `triage-inbox` command */
   export type TriageInbox = {}
   /** Arguments passed to the `search-knowledge` command */
