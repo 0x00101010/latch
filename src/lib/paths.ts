@@ -12,6 +12,8 @@ export const PERSONAL_TODO_PATH = path.join(
 );
 export const ARCHIVE_PATH = path.join(WORKSPACE_ROOT, "todos", "archive.md");
 export const SCHEDULES_ROOT = path.join(WORKSPACE_ROOT, "schedules");
+export const HABITS_PATH = path.join(WORKSPACE_ROOT, "todos", "habits.md");
+export const JOURNAL_ROOT = path.join(WORKSPACE_ROOT, "journal");
 
 function pad(n: number): string {
   return n.toString().padStart(2, "0");
@@ -28,4 +30,10 @@ export function scheduleFileFor(date: Date): string {
 
 export function todayScheduleFile(): string {
   return scheduleFileFor(new Date());
+}
+
+export function journalFileFor(date: Date): string {
+  const year = date.getFullYear().toString();
+  const month = pad(date.getMonth() + 1);
+  return path.join(JOURNAL_ROOT, year, month, `${isoDate(date)}.md`);
 }
