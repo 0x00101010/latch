@@ -1,7 +1,10 @@
 import fs from "fs";
 import { Todo, Priority } from "./types";
 
-const TASK_RE = /^- \[([ x])\] P([0-3]) \| (.+?)(?:\s*\|\s*(.+))?$/;
+// Matches both the todo-file format (`- [ ] P1 | desc`) and the
+// schedule-file format (`- [ ] **P1** - desc`).
+const TASK_RE =
+  /^- \[([ x])\] (?:\*\*P([0-3])\*\*\s*-\s*|P([0-3])\s*\|\s*)(.+?)(?:\s*\|\s*(.+))?$/;
 const CONTEXT_RE = /^  > (.+)$/;
 const HEADING_RE = /^### (.+)$/;
 const SCHEDULE_HEADING_RE = /^##\s+(.+)$/;
@@ -24,7 +27,7 @@ function parseTaskLine(
     j++;
   }
 
-  const rest = taskMatch[4]?.trim();
+  const rest = taskMatch[5]?.trim();
   let sourceRef: string | undefined;
 
   // Last pipe-separated segment could be a source ref (LINEAR:, GH:) or a date — not a source ref
@@ -43,8 +46,8 @@ function parseTaskLine(
 
   return {
     done: taskMatch[1] === "x",
-    priority: Number(taskMatch[2]) as Priority,
-    description: taskMatch[3].trim(),
+    priority: Number(taskMatch[2] ?? taskMatch[3]) as Priority,
+    description: taskMatch[4].trim(),
     sourceRef,
     context,
     project: currentProject,
