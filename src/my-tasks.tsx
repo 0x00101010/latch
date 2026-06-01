@@ -680,7 +680,6 @@ export default function Command() {
     if (!schedule.exists) {
       return (
         <>
-          {renderHabitsSection()}
           <List.Section title="Today">
             <List.Item
               icon={Icon.Calendar}
@@ -702,6 +701,7 @@ export default function Command() {
               }
             />
           </List.Section>
+          {renderHabitsSection()}
         </>
       );
     }
@@ -720,7 +720,6 @@ export default function Command() {
 
     return (
       <>
-        {renderHabitsSection()}
         {stats && (
           <List.Section title={formatStatsTitle(stats)}>
             <List.Item
@@ -792,6 +791,7 @@ export default function Command() {
             ))}
           </List.Section>
         )}
+        {renderHabitsSection()}
       </>
     );
   }
