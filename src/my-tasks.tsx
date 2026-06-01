@@ -11,15 +11,36 @@ import {
   Toast,
 } from "@raycast/api";
 import { usePromise } from "@raycast/utils";
-import { useState, useEffect, useCallback } from "react";
-import { loadAllTodos } from "./lib/parser";
-import { completeAndArchive, deleteTask, cyclePriority } from "./lib/writer";
-import { WORK_TODO_PATH, PERSONAL_TODO_PATH } from "./lib/paths";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import fs from "fs";
+import { spawn } from "child_process";
+import { loadAllTodos, parseScheduleFile, ParsedSchedule } from "./lib/parser";
+import {
+  completeAndArchive,
+  deleteTask,
+  cyclePriority,
+  completeScheduleItem,
+  deferToTomorrow,
+  addToTodaySchedule,
+} from "./lib/writer";
+import {
+  WORK_TODO_PATH,
+  PERSONAL_TODO_PATH,
+  todayScheduleFile,
+} from "./lib/paths";
 import { Todo, PRIORITY_LABELS } from "./lib/types";
+import {
+  computeSlipAge,
+  findOverlooked,
+  computeYesterdayStats,
+  YesterdayStats,
+} from "./lib/reflection";
 
 const STORAGE_KEY_FILTER = "latch-project-filter";
 const STORAGE_KEY_PINNED = "latch-pinned-projects";
 const STORAGE_KEY_COLLAPSED = "latch-collapsed-projects";
+
+const TODAY_FILTER = "__today__";
 
 const PRIORITY_RAYCAST_COLORS: Record<number, Color> = {
   0: Color.Red,
@@ -52,7 +73,9 @@ function buildDetailMarkdown(todo: Todo): string {
   if (todo.project) lines.push(`**Project**: ${todo.project}`);
   if (todo.sourceRef) {
     const url = sourceRefToUrl(todo.sourceRef);
-    lines.push(`**Source**: ${url ? `[${todo.sourceRef}](${url})` : todo.sourceRef}`);
+    lines.push(
+      `**Source**: ${url ? `[${todo.sourceRef}](${url})` : todo.sourceRef}`,
+    );
   }
   if (todo.context.length > 0) {
     lines.push("", "---", "");
@@ -82,7 +105,8 @@ function sortedProjectEntries(
   return entries.sort(([a], [b]) => {
     const aPinned = pinnedProjects.includes(a);
     const bPinned = pinnedProjects.includes(b);
-    if (aPinned && bPinned) return pinnedProjects.indexOf(a) - pinnedProjects.indexOf(b);
+    if (aPinned && bPinned)
+      return pinnedProjects.indexOf(a) - pinnedProjects.indexOf(b);
     if (aPinned) return -1;
     if (bPinned) return 1;
     return a.localeCompare(b);
@@ -98,11 +122,27 @@ function parseStoredSet(raw: string | undefined): Set<string> {
   }
 }
 
+function slipBadgeColor(slipAge: number): Color {
+  if (slipAge >= 6) return Color.Red;
+  if (slipAge >= 3) return Color.Orange;
+  return Color.SecondaryText;
+}
+
+function formatStatsTitle(s: YesterdayStats): string {
+  const parts = [`Yesterday: ${s.done}/${s.total}`];
+  if (s.deferredOut > 0) parts.push(`${s.deferredOut} deferred`);
+  if (s.chronicMax >= 3) parts.push(`1 chronic (${s.chronicMax}d)`);
+  return parts.join(" · ");
+}
+
 export default function Command() {
   const [showDetail, setShowDetail] = useState(false);
+  const [showAlignment, setShowAlignment] = useState(false);
   const [projectFilter, setProjectFilter] = useState("all");
   const [pinnedProjects, setPinnedProjects] = useState<string[]>([]);
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
+    new Set(),
+  );
   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
   useEffect(() => {
@@ -111,7 +151,12 @@ export default function Command() {
       LocalStorage.getItem<string>(STORAGE_KEY_PINNED),
       LocalStorage.getItem<string>(STORAGE_KEY_COLLAPSED),
     ]).then(([savedFilter, savedPinned, savedCollapsed]) => {
-      if (savedFilter) setProjectFilter(savedFilter);
+      const todayExists = fs.existsSync(todayScheduleFile());
+      if (todayExists) {
+        setProjectFilter(TODAY_FILTER);
+      } else if (savedFilter) {
+        setProjectFilter(savedFilter);
+      }
       if (savedPinned) {
         try {
           setPinnedProjects(JSON.parse(savedPinned));
@@ -149,18 +194,134 @@ export default function Command() {
     });
   }, []);
 
-  const { isLoading, data: todos, revalidate } = usePromise(
+  const {
+    isLoading,
+    data: todos,
+    revalidate,
+  } = usePromise(
     async () => loadAllTodos(WORK_TODO_PATH, PERSONAL_TODO_PATH),
     [],
   );
 
+  const {
+    isLoading: scheduleLoading,
+    data: schedule,
+    revalidate: revalidateSchedule,
+  } = usePromise(async () => {
+    const today = new Date();
+    const scheduleFile = todayScheduleFile();
+    const exists = fs.existsSync(scheduleFile);
+    const parsed: ParsedSchedule = exists
+      ? parseScheduleFile(scheduleFile)
+      : { tasks: [], alignment: "", sectionOrder: [] };
+    const slipAges = new Map<string, number>();
+    if (exists) {
+      for (const t of parsed.tasks) {
+        slipAges.set(
+          `${t.sourceFile}:${t.lineNumber}`,
+          computeSlipAge(t, today),
+        );
+      }
+    }
+    const stats = exists ? computeYesterdayStats(today) : null;
+    return { exists, parsed, slipAges, stats };
+  }, []);
+
+  const overlookedItems = useMemo(() => {
+    if (!todos) return [];
+    return findOverlooked(todos, new Date());
+  }, [todos]);
+
+  function refreshAll() {
+    revalidate();
+    revalidateSchedule();
+  }
+
+  function runPrioSkill() {
+    try {
+      const child = spawn("amp", ["-x", "Use the prio skill"], {
+        detached: true,
+        stdio: "ignore",
+      });
+      child.on("exit", () => refreshAll());
+      child.unref();
+      showToast({
+        style: Toast.Style.Animated,
+        title: "Generating today's schedule…",
+      });
+    } catch (e) {
+      showToast({
+        style: Toast.Style.Failure,
+        title: "Failed to launch amp",
+        message: String(e),
+      });
+    }
+  }
+
   async function handleComplete(todo: Todo) {
     try {
       completeAndArchive(todo);
-      await showToast({ style: Toast.Style.Success, title: "Archived", message: todo.description });
+      await showToast({
+        style: Toast.Style.Success,
+        title: "Archived",
+        message: todo.description,
+      });
       revalidate();
     } catch (e) {
-      await showToast({ style: Toast.Style.Failure, title: "Failed", message: String(e) });
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed",
+        message: String(e),
+      });
+    }
+  }
+
+  async function handleCompleteSchedule(todo: Todo) {
+    try {
+      completeScheduleItem(todo, [WORK_TODO_PATH, PERSONAL_TODO_PATH]);
+      await showToast({
+        style: Toast.Style.Success,
+        title: "Completed",
+        message: todo.description,
+      });
+      refreshAll();
+    } catch (e) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed",
+        message: String(e),
+      });
+    }
+  }
+
+  async function handleDefer(todo: Todo) {
+    try {
+      deferToTomorrow(todo);
+      await showToast({
+        style: Toast.Style.Success,
+        title: "Deferred to tomorrow",
+      });
+      refreshAll();
+    } catch (e) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed",
+        message: String(e),
+      });
+    }
+  }
+
+  async function handleAddToToday(todo: Todo) {
+    try {
+      addToTodaySchedule(todo);
+      await showToast({ style: Toast.Style.Success, title: "Added to today" });
+      refreshAll();
+    } catch (e) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed",
+        message: String(e),
+      });
     }
   }
 
@@ -176,7 +337,11 @@ export default function Command() {
       await showToast({ style: Toast.Style.Success, title: "Deleted" });
       revalidate();
     } catch (e) {
-      await showToast({ style: Toast.Style.Failure, title: "Failed", message: String(e) });
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed",
+        message: String(e),
+      });
     }
   }
 
@@ -184,10 +349,17 @@ export default function Command() {
     try {
       cyclePriority(todo);
       const next = PRIORITY_LABELS[((todo.priority + 1) % 4) as 0 | 1 | 2 | 3];
-      await showToast({ style: Toast.Style.Success, title: `Priority → ${next}` });
-      revalidate();
+      await showToast({
+        style: Toast.Style.Success,
+        title: `Priority → ${next}`,
+      });
+      refreshAll();
     } catch (e) {
-      await showToast({ style: Toast.Style.Failure, title: "Failed", message: String(e) });
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed",
+        message: String(e),
+      });
     }
   }
 
@@ -196,24 +368,72 @@ export default function Command() {
     .sort((a, b) => a.priority - b.priority);
   const grouped = groupByProject(activeTodos);
   const sorted = sortedProjectEntries(grouped, pinnedProjects);
+
+  if (projectFilter === TODAY_FILTER) {
+    return (
+      <List
+        isLoading={isLoading || scheduleLoading || !prefsLoaded}
+        isShowingDetail={showDetail || showAlignment}
+        searchBarAccessory={
+          <List.Dropdown
+            tooltip="Filter by project"
+            value={projectFilter}
+            onChange={handleFilterChange}
+          >
+            <List.Dropdown.Item
+              title="Today"
+              value={TODAY_FILTER}
+              icon={Icon.Calendar}
+            />
+            <List.Dropdown.Item title="All Projects" value="all" />
+            <List.Dropdown.Section title="Projects">
+              {sorted.map(([name, tasks]) => (
+                <List.Dropdown.Item
+                  key={name}
+                  title={`${pinnedProjects.includes(name) ? "📌 " : ""}${name} (${tasks.length})`}
+                  value={name}
+                />
+              ))}
+            </List.Dropdown.Section>
+          </List.Dropdown>
+        }
+      >
+        {renderTodayLens()}
+      </List>
+    );
+  }
+
   const filtered =
-    projectFilter === "all" ? sorted : sorted.filter(([p]) => p === projectFilter);
+    projectFilter === "all"
+      ? sorted
+      : sorted.filter(([p]) => p === projectFilter);
 
   return (
     <List
       isLoading={isLoading || !prefsLoaded}
       isShowingDetail={showDetail}
       searchBarAccessory={
-        <List.Dropdown tooltip="Filter by project" value={projectFilter} onChange={handleFilterChange}>
+        <List.Dropdown
+          tooltip="Filter by project"
+          value={projectFilter}
+          onChange={handleFilterChange}
+        >
+          <List.Dropdown.Item
+            title="Today"
+            value={TODAY_FILTER}
+            icon={Icon.Calendar}
+          />
           <List.Dropdown.Item title="All Projects" value="all" />
           <List.Dropdown.Section title="Projects">
-            {sortedProjectEntries(grouped, pinnedProjects).map(([name, tasks]) => (
-              <List.Dropdown.Item
-                key={name}
-                title={`${pinnedProjects.includes(name) ? "📌 " : ""}${name} (${tasks.length})`}
-                value={name}
-              />
-            ))}
+            {sortedProjectEntries(grouped, pinnedProjects).map(
+              ([name, tasks]) => (
+                <List.Dropdown.Item
+                  key={name}
+                  title={`${pinnedProjects.includes(name) ? "📌 " : ""}${name} (${tasks.length})`}
+                  value={name}
+                />
+              ),
+            )}
           </List.Dropdown.Section>
         </List.Dropdown>
       }
@@ -225,7 +445,11 @@ export default function Command() {
 
         if (isCollapsed) {
           return (
-            <List.Section key={project} title={sectionTitle} subtitle={`${tasks.length} — collapsed`}>
+            <List.Section
+              key={project}
+              title={sectionTitle}
+              subtitle={`${tasks.length} — collapsed`}
+            >
               <List.Item
                 key={`collapsed-${project}`}
                 icon={Icon.ChevronRight}
@@ -251,7 +475,11 @@ export default function Command() {
         }
 
         return (
-          <List.Section key={project} title={sectionTitle} subtitle={`${tasks.length}`}>
+          <List.Section
+            key={project}
+            title={sectionTitle}
+            subtitle={`${tasks.length}`}
+          >
             {tasks.map((todo) => (
               <List.Item
                 key={`${todo.sourceFile}:${todo.lineNumber}`}
@@ -264,7 +492,9 @@ export default function Command() {
                   showDetail
                     ? []
                     : [
-                        ...(todo.sourceRef ? [{ tag: todo.sourceRef, icon: Icon.Link }] : []),
+                        ...(todo.sourceRef
+                          ? [{ tag: todo.sourceRef, icon: Icon.Link }]
+                          : []),
                         {
                           tag: {
                             value: PRIORITY_LABELS[todo.priority],
@@ -274,7 +504,9 @@ export default function Command() {
                       ]
                 }
                 detail={
-                  showDetail ? <List.Item.Detail markdown={buildDetailMarkdown(todo)} /> : undefined
+                  showDetail ? (
+                    <List.Item.Detail markdown={buildDetailMarkdown(todo)} />
+                  ) : undefined
                 }
                 actions={
                   <ActionPanel>
@@ -313,7 +545,9 @@ export default function Command() {
                       <ActionPanel.Section title="Section">
                         <Action
                           icon={isPinned ? Icon.PinDisabled : Icon.Pin}
-                          title={isPinned ? "Unpin Section" : "Pin Section to Top"}
+                          title={
+                            isPinned ? "Unpin Section" : "Pin Section to Top"
+                          }
                           onAction={() => togglePin(todo.project!)}
                         />
                         <Action
@@ -332,4 +566,203 @@ export default function Command() {
       })}
     </List>
   );
+
+  function renderTodayLens() {
+    if (!schedule) return null;
+    if (!schedule.exists) {
+      return (
+        <List.Section title="Today">
+          <List.Item
+            icon={Icon.Calendar}
+            title="No schedule for today"
+            accessories={[{ text: "Generate via prio" }]}
+            actions={
+              <ActionPanel>
+                <Action
+                  icon={Icon.Wand}
+                  title="Generate via Prio"
+                  onAction={runPrioSkill}
+                />
+                <Action
+                  icon={Icon.ArrowClockwise}
+                  title="Refresh"
+                  onAction={refreshAll}
+                />
+              </ActionPanel>
+            }
+          />
+        </List.Section>
+      );
+    }
+
+    const { parsed, slipAges, stats } = schedule;
+    const sectionMap = new Map<string, Todo[]>();
+    for (const section of parsed.sectionOrder) sectionMap.set(section, []);
+    for (const t of parsed.tasks) {
+      const key = t.project ?? "Uncategorized";
+      if (!sectionMap.has(key)) {
+        sectionMap.set(key, []);
+        parsed.sectionOrder.push(key);
+      }
+      sectionMap.get(key)!.push(t);
+    }
+
+    return (
+      <>
+        {stats && (
+          <List.Section title={formatStatsTitle(stats)}>
+            <List.Item
+              icon={Icon.BarChart}
+              title="Yesterday's wrap-up"
+              accessories={[{ text: `${stats.done}/${stats.total} done` }]}
+              actions={
+                <ActionPanel>
+                  <Action
+                    icon={Icon.ArrowClockwise}
+                    title="Refresh"
+                    onAction={refreshAll}
+                  />
+                </ActionPanel>
+              }
+            />
+          </List.Section>
+        )}
+        {parsed.sectionOrder.map((section) => {
+          const items = sectionMap.get(section) ?? [];
+          if (items.length === 0) return null;
+          return (
+            <List.Section
+              key={section}
+              title={section}
+              subtitle={`${items.length}`}
+            >
+              {items.map((todo) => renderScheduleItem(todo, slipAges))}
+            </List.Section>
+          );
+        })}
+        {overlookedItems.length > 0 && (
+          <List.Section
+            title="⚠ Overlooked"
+            subtitle={`${overlookedItems.length}`}
+          >
+            {overlookedItems.map((todo) => (
+              <List.Item
+                key={`overlooked-${todo.sourceFile}:${todo.lineNumber}`}
+                icon={{ source: Icon.ExclamationMark, tintColor: Color.Yellow }}
+                title={todo.description}
+                accessories={[
+                  ...(todo.sourceRef
+                    ? [{ tag: todo.sourceRef, icon: Icon.Link }]
+                    : []),
+                  {
+                    tag: {
+                      value: PRIORITY_LABELS[todo.priority],
+                      color: PRIORITY_RAYCAST_COLORS[todo.priority],
+                    },
+                  },
+                ]}
+                actions={
+                  <ActionPanel>
+                    <Action
+                      icon={Icon.PlusCircle}
+                      title="Add to Today's Schedule"
+                      onAction={() => handleAddToToday(todo)}
+                    />
+                    {todo.sourceRef && sourceRefToUrl(todo.sourceRef) && (
+                      <Action.OpenInBrowser
+                        title="Open Source Ref"
+                        url={sourceRefToUrl(todo.sourceRef)!}
+                      />
+                    )}
+                  </ActionPanel>
+                }
+              />
+            ))}
+          </List.Section>
+        )}
+      </>
+    );
+  }
+
+  function renderScheduleItem(todo: Todo, slipAges: Map<string, number>) {
+    const key = `${todo.sourceFile}:${todo.lineNumber}`;
+    const slipAge = slipAges.get(key) ?? 0;
+    const accessories: List.Item.Accessory[] = [];
+    if (slipAge > 0) {
+      accessories.push({
+        text: { value: `↻ ${slipAge}d`, color: slipBadgeColor(slipAge) },
+      });
+    }
+    if (todo.sourceRef)
+      accessories.push({ tag: todo.sourceRef, icon: Icon.Link });
+    accessories.push({
+      tag: {
+        value: PRIORITY_LABELS[todo.priority],
+        color: PRIORITY_RAYCAST_COLORS[todo.priority],
+      },
+    });
+
+    const alignmentMarkdown =
+      showAlignment && schedule?.parsed.alignment
+        ? `# Alignment\n\n${schedule.parsed.alignment}`
+        : buildDetailMarkdown(todo);
+
+    return (
+      <List.Item
+        key={key}
+        icon={{
+          source: todo.done ? Icon.Checkmark : Icon.Circle,
+          tintColor: PRIORITY_RAYCAST_COLORS[todo.priority],
+        }}
+        title={todo.description}
+        accessories={showDetail || showAlignment ? [] : accessories}
+        detail={
+          showDetail || showAlignment ? (
+            <List.Item.Detail markdown={alignmentMarkdown} />
+          ) : undefined
+        }
+        actions={
+          <ActionPanel>
+            <ActionPanel.Section>
+              <Action
+                icon={Icon.Checkmark}
+                title="Complete"
+                onAction={() => handleCompleteSchedule(todo)}
+              />
+              <Action
+                icon={Icon.Calendar}
+                title="Defer to Tomorrow (Copy)"
+                onAction={() => handleDefer(todo)}
+              />
+            </ActionPanel.Section>
+            <ActionPanel.Section>
+              <Action
+                icon={Icon.ArrowClockwise}
+                title="Cycle Priority"
+                onAction={() => handleCyclePriority(todo)}
+              />
+              {todo.sourceRef && sourceRefToUrl(todo.sourceRef) && (
+                <Action.OpenInBrowser
+                  title="Open Source Ref"
+                  url={sourceRefToUrl(todo.sourceRef)!}
+                />
+              )}
+              <Action
+                icon={Icon.AppWindowSidebarRight}
+                title="Toggle Detail"
+                onAction={() => setShowDetail((s) => !s)}
+              />
+              {schedule?.parsed.alignment && (
+                <Action
+                  icon={Icon.Book}
+                  title="Toggle Alignment Detail"
+                  onAction={() => setShowAlignment((s) => !s)}
+                />
+              )}
+            </ActionPanel.Section>
+          </ActionPanel>
+        }
+      />
+    );
+  }
 }
