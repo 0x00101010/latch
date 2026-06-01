@@ -3,7 +3,8 @@ import path from "path";
 import { Todo, Priority, PRIORITY_LABELS } from "./types";
 import { archiveTask } from "./archiver";
 import { parseTodoFile } from "./parser";
-import { scheduleFileFor, todayScheduleFile } from "./paths";
+import { scheduleFileFor, todayScheduleFile, journalFileFor } from "./paths";
+import { Habit } from "./habits";
 
 function readLines(filePath: string): string[] {
   return fs.readFileSync(filePath, "utf-8").split("\n");
@@ -207,6 +208,89 @@ export function deferToTomorrow(todo: Todo): void {
       ? appendSection(lines, headingForSection, block)
       : insertAtSectionEnd(lines, headingIdx, block);
   writeLines(targetPath, updated);
+}
+
+function ensureJournalFile(filePath: string, date: Date): void {
+  if (fs.existsSync(filePath)) return;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const skeleton = [
+    `# Journal — ${dayLabel(date)}`,
+    "",
+    "## Habits (auto)",
+    "",
+    "## Notes",
+    "",
+  ].join("\n");
+  fs.writeFileSync(filePath, skeleton, "utf-8");
+}
+
+/**
+ * Toggle the ✓/✗ state of a habit in `<date>`'s journal `## Habits (auto)` section.
+ * Creates the journal file (with skeleton) and/or the section if missing. Preserves
+ * all other content byte-for-byte (especially `## Notes`).
+ */
+export function toggleHabit(habit: Habit, date: Date): void {
+  const filePath = journalFileFor(date);
+  ensureJournalFile(filePath, date);
+
+  const lines = readLines(filePath);
+  // Locate the `## Habits (auto)` section bounds.
+  let headingIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^##\s+Habits\s*\(auto\)\s*$/.test(lines[i])) {
+      headingIdx = i;
+      break;
+    }
+  }
+  if (headingIdx === -1) {
+    // Insert section just after the H1 (or at top if no H1).
+    let insertAt = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (/^#\s+/.test(lines[i])) {
+        insertAt = i + 1;
+        break;
+      }
+    }
+    const block = ["", "## Habits (auto)", `- ${habit.name}: ✓`];
+    lines.splice(insertAt, 0, ...block);
+    writeLines(filePath, lines);
+    return;
+  }
+
+  // Section end: next `## ` heading or EOF.
+  let endIdx = lines.length;
+  for (let i = headingIdx + 1; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i])) {
+      endIdx = i;
+      break;
+    }
+  }
+
+  // Look for the habit line within the section.
+  const habitLineRe = /^-\s+(.+?):\s*(✓|✗)\s*$/;
+  let habitLineIdx = -1;
+  for (let i = headingIdx + 1; i < endIdx; i++) {
+    const m = lines[i].match(habitLineRe);
+    if (m && m[1].trim() === habit.name) {
+      habitLineIdx = i;
+      break;
+    }
+  }
+
+  if (habitLineIdx !== -1) {
+    const m = lines[habitLineIdx].match(habitLineRe)!;
+    const next = m[2] === "✓" ? "✗" : "✓";
+    lines[habitLineIdx] = `- ${habit.name}: ${next}`;
+    writeLines(filePath, lines);
+    return;
+  }
+
+  // Insert new habit entry after the last non-blank line within the section.
+  let insertAt = endIdx;
+  while (insertAt > headingIdx + 1 && lines[insertAt - 1].trim() === "")
+    insertAt--;
+  lines.splice(insertAt, 0, `- ${habit.name}: ✓`);
+  writeLines(filePath, lines);
 }
 
 /**

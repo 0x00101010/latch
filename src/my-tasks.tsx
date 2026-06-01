@@ -22,10 +22,12 @@ import {
   completeScheduleItem,
   deferToTomorrow,
   addToTodaySchedule,
+  toggleHabit,
 } from "./lib/writer";
 import {
   WORK_TODO_PATH,
   PERSONAL_TODO_PATH,
+  HABITS_PATH,
   todayScheduleFile,
 } from "./lib/paths";
 import { Todo, PRIORITY_LABELS } from "./lib/types";
@@ -35,6 +37,15 @@ import {
   computeYesterdayStats,
   YesterdayStats,
 } from "./lib/reflection";
+import {
+  Habit,
+  HabitState,
+  parseHabitsFile,
+  isDueOn,
+  getHabitState,
+  sparkline,
+  formatStreakBadge,
+} from "./lib/habits";
 
 const STORAGE_KEY_FILTER = "latch-project-filter";
 const STORAGE_KEY_PINNED = "latch-pinned-projects";
@@ -224,7 +235,26 @@ export default function Command() {
       }
     }
     const stats = exists ? computeYesterdayStats(today) : null;
-    return { exists, parsed, slipAges, stats };
+    const habits = parseHabitsFile(HABITS_PATH);
+    const dueHabits = habits.filter((h) => isDueOn(h, today));
+    const habitStates = new Map<string, HabitState>();
+    for (const h of dueHabits) {
+      habitStates.set(h.name, getHabitState(h, today));
+    }
+    const habitSpark = habits.length > 0 ? sparkline(habits, today) : "";
+    const habitsDone = dueHabits.filter(
+      (h) => habitStates.get(h.name)?.checked,
+    ).length;
+    return {
+      exists,
+      parsed,
+      slipAges,
+      stats,
+      dueHabits,
+      habitStates,
+      habitSpark,
+      habitsDone,
+    };
   }, []);
 
   const overlookedItems = useMemo(() => {
@@ -300,6 +330,24 @@ export default function Command() {
       await showToast({
         style: Toast.Style.Success,
         title: "Deferred to tomorrow",
+      });
+      refreshAll();
+    } catch (e) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed",
+        message: String(e),
+      });
+    }
+  }
+
+  async function handleToggleHabit(habit: Habit) {
+    try {
+      toggleHabit(habit, new Date());
+      await showToast({
+        style: Toast.Style.Success,
+        title: "Toggled",
+        message: habit.name,
       });
       refreshAll();
     } catch (e) {
@@ -567,31 +615,94 @@ export default function Command() {
     </List>
   );
 
+  function renderHabitsSection() {
+    if (!schedule) return null;
+    const { dueHabits, habitStates, habitSpark, habitsDone } = schedule;
+    if (dueHabits.length === 0) return null;
+    const subtitle = `${habitSpark}  ${habitsDone}/${dueHabits.length} today`;
+    return (
+      <List.Section title="Habits" subtitle={subtitle}>
+        {dueHabits.map((habit) => {
+          const state = habitStates.get(habit.name) ?? {
+            checked: false,
+            paused: false,
+            streak: 0,
+          };
+          const badge = formatStreakBadge(state);
+          const accessories: List.Item.Accessory[] = [];
+          if (badge) {
+            accessories.push({
+              text: state.paused
+                ? { value: badge, color: Color.Orange }
+                : badge,
+            });
+          }
+          return (
+            <List.Item
+              key={`habit-${habit.name}`}
+              icon={{
+                source: state.checked ? Icon.Checkmark : Icon.Circle,
+                tintColor: state.checked
+                  ? Color.Green
+                  : state.paused
+                    ? Color.Orange
+                    : Color.SecondaryText,
+              }}
+              title={
+                state.paused
+                  ? { value: habit.name, tooltip: "Yesterday missed — pause" }
+                  : habit.name
+              }
+              accessories={accessories}
+              actions={
+                <ActionPanel>
+                  <Action
+                    icon={state.checked ? Icon.XMarkCircle : Icon.Checkmark}
+                    title={state.checked ? "Mark Missed" : "Mark Done"}
+                    onAction={() => handleToggleHabit(habit)}
+                  />
+                  <Action
+                    icon={Icon.ArrowClockwise}
+                    title="Refresh"
+                    onAction={refreshAll}
+                  />
+                </ActionPanel>
+              }
+            />
+          );
+        })}
+      </List.Section>
+    );
+  }
+
   function renderTodayLens() {
     if (!schedule) return null;
     if (!schedule.exists) {
       return (
-        <List.Section title="Today">
-          <List.Item
-            icon={Icon.Calendar}
-            title="No schedule for today"
-            accessories={[{ text: "Generate via prio" }]}
-            actions={
-              <ActionPanel>
-                <Action
-                  icon={Icon.Wand}
-                  title="Generate via Prio"
-                  onAction={runPrioSkill}
-                />
-                <Action
-                  icon={Icon.ArrowClockwise}
-                  title="Refresh"
-                  onAction={refreshAll}
-                />
-              </ActionPanel>
-            }
-          />
-        </List.Section>
+        <>
+          {renderHabitsSection()}
+          <List.Section title="Today">
+            <List.Item
+              icon={Icon.Calendar}
+              title="No schedule for today"
+              accessories={[{ text: "Generate via prio" }]}
+              actions={
+                <ActionPanel>
+                  <Action
+                    icon={Icon.Wand}
+                    title="Generate via Prio"
+                    onAction={runPrioSkill}
+                  />
+                  <Action
+                    icon={Icon.ArrowClockwise}
+                    title="Refresh"
+                    onAction={refreshAll}
+                  />
+                </ActionPanel>
+              }
+            />
+          </List.Section>
+        </>
       );
     }
 
@@ -609,6 +720,7 @@ export default function Command() {
 
     return (
       <>
+        {renderHabitsSection()}
         {stats && (
           <List.Section title={formatStatsTitle(stats)}>
             <List.Item
