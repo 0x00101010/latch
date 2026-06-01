@@ -709,8 +709,10 @@ export default function Command() {
     const { parsed, slipAges, stats } = schedule;
     const sectionMap = new Map<string, Todo[]>();
     for (const section of parsed.sectionOrder) sectionMap.set(section, []);
+    const focusP0: Todo[] = [];
     for (const t of parsed.tasks) {
       if (t.done) continue;
+      if (t.priority === 0) focusP0.push(t);
       const key = t.project ?? "Uncategorized";
       if (!sectionMap.has(key)) {
         sectionMap.set(key, []);
@@ -718,6 +720,8 @@ export default function Command() {
       }
       sectionMap.get(key)!.push(t);
     }
+
+    const focusCount = focusP0.length + overlookedItems.length;
 
     return (
       <>
@@ -739,6 +743,14 @@ export default function Command() {
             />
           </List.Section>
         )}
+        {focusCount > 0 && (
+          <List.Section title="🎯 Focus" subtitle={`${focusCount}`}>
+            {overlookedItems.map((todo) => renderOverlookedItem(todo))}
+            {focusP0.map((todo) =>
+              renderScheduleItem(todo, slipAges, "focus-"),
+            )}
+          </List.Section>
+        )}
         {parsed.sectionOrder.map((section) => {
           const items = sectionMap.get(section) ?? [];
           if (items.length === 0) return null;
@@ -752,52 +764,50 @@ export default function Command() {
             </List.Section>
           );
         })}
-        {overlookedItems.length > 0 && (
-          <List.Section
-            title="⚠ Overlooked"
-            subtitle={`${overlookedItems.length}`}
-          >
-            {overlookedItems.map((todo) => (
-              <List.Item
-                key={`overlooked-${todo.sourceFile}:${todo.lineNumber}`}
-                icon={{ source: Icon.ExclamationMark, tintColor: Color.Yellow }}
-                title={todo.description}
-                accessories={[
-                  ...(todo.sourceRef
-                    ? [{ tag: todo.sourceRef, icon: Icon.Link }]
-                    : []),
-                  {
-                    tag: {
-                      value: PRIORITY_LABELS[todo.priority],
-                      color: PRIORITY_RAYCAST_COLORS[todo.priority],
-                    },
-                  },
-                ]}
-                actions={
-                  <ActionPanel>
-                    <Action
-                      icon={Icon.PlusCircle}
-                      title="Add to Today's Schedule"
-                      onAction={() => handleAddToToday(todo)}
-                    />
-                    {todo.sourceRef && sourceRefToUrl(todo.sourceRef) && (
-                      <Action.OpenInBrowser
-                        title="Open Source Ref"
-                        url={sourceRefToUrl(todo.sourceRef)!}
-                      />
-                    )}
-                  </ActionPanel>
-                }
-              />
-            ))}
-          </List.Section>
-        )}
         {renderHabitsSection()}
       </>
     );
   }
 
-  function renderScheduleItem(todo: Todo, slipAges: Map<string, number>) {
+  function renderOverlookedItem(todo: Todo) {
+    return (
+      <List.Item
+        key={`overlooked-${todo.sourceFile}:${todo.lineNumber}`}
+        icon={{ source: Icon.ExclamationMark, tintColor: Color.Yellow }}
+        title={todo.description}
+        accessories={[
+          ...(todo.sourceRef ? [{ tag: todo.sourceRef, icon: Icon.Link }] : []),
+          {
+            tag: {
+              value: PRIORITY_LABELS[todo.priority],
+              color: PRIORITY_RAYCAST_COLORS[todo.priority],
+            },
+          },
+        ]}
+        actions={
+          <ActionPanel>
+            <Action
+              icon={Icon.PlusCircle}
+              title="Add to Today's Schedule"
+              onAction={() => handleAddToToday(todo)}
+            />
+            {todo.sourceRef && sourceRefToUrl(todo.sourceRef) && (
+              <Action.OpenInBrowser
+                title="Open Source Ref"
+                url={sourceRefToUrl(todo.sourceRef)!}
+              />
+            )}
+          </ActionPanel>
+        }
+      />
+    );
+  }
+
+  function renderScheduleItem(
+    todo: Todo,
+    slipAges: Map<string, number>,
+    keyPrefix = "",
+  ) {
     const key = `${todo.sourceFile}:${todo.lineNumber}`;
     const slipAge = slipAges.get(key) ?? 0;
     const accessories: List.Item.Accessory[] = [];
@@ -822,7 +832,7 @@ export default function Command() {
 
     return (
       <List.Item
-        key={key}
+        key={`${keyPrefix}${key}`}
         icon={{
           source: todo.done ? Icon.Checkmark : Icon.Circle,
           tintColor: PRIORITY_RAYCAST_COLORS[todo.priority],
