@@ -710,6 +710,7 @@ export default function Command() {
     const sectionMap = new Map<string, Todo[]>();
     for (const section of parsed.sectionOrder) sectionMap.set(section, []);
     for (const t of parsed.tasks) {
+      if (t.done) continue;
       const key = t.project ?? "Uncategorized";
       if (!sectionMap.has(key)) {
         sectionMap.set(key, []);
